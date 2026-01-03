@@ -158,17 +158,16 @@ async function run() {
       const totalBuyers = await usersCollection.countDocuments({
         role: "buyer",
       });
-      const users = await usersCollection.find().toArray();
-      const totalAvailableCoin = users.reduce(
-        (sum, user) => sum + (user.coins || 0),
-        0
-      );
-      const totalPayments = await withdrawalsCollection
-        .aggregate([
-          { $match: { status: "approved" } },
-          { $group: { _id: null, total: { $sum: "$withdrawal_amount" } } },
-        ])
+      const totalCoins = await usersCollection
+        .aggregate([{ $group: { _id: null, total: { $sum: "$coins" } } }])
         .toArray();
+      const totalPayments = await paymentsCollection.countDocuments();
+      const totalWithdrawals = await withdrawalsCollection.countDocuments({
+        status: "approved",
+      });
+      const pendingSubmissions = await submissionsCollection.countDocuments({
+        status: "pending",
+      });
 
       res.send({
         totalWorkers,
