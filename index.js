@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const Joi = require("joi");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const requiredEnv = ["DB_USER", "DB_PASS", "ACCESS_TOKEN_SECRET"];
 requiredEnv.forEach((env) => {
@@ -18,13 +19,14 @@ const port = process.env.PORT || 5000;
 
 // Joi Schemas
 const taskSchema = Joi.object({
-  title: Joi.string().required(),
-  detail: Joi.string().required(),
+  task_title: Joi.string().required(),
+  task_detail: Joi.string().required(),
   required_workers: Joi.number().min(1).required(),
   payable_amount: Joi.number().min(1).required(),
   completion_date: Joi.string().required(),
   submission_info: Joi.string().required(),
-  image_url: Joi.string().uri().required(),
+  task_image_url: Joi.string().uri().required(),
+  buyer_name: Joi.string().required(),
   buyer_email: Joi.string().email().required(),
   status: Joi.string().valid("active", "pending").default("active"),
 });
@@ -180,8 +182,8 @@ async function run() {
       res.send({
         totalWorkers,
         totalBuyers,
-        totalAvailableCoin,
-        totalPayments: totalPayments[0]?.total || 0,
+        totalAvailableCoin: totalCoins[0]?.total || 0,
+        totalPayments,
       });
     });
 
@@ -333,13 +335,7 @@ async function run() {
         return res.status(400).send({ message: "Insufficient coins" });
       }
 
-      const result = await tasksCollection.insertOne({
-        ...task,
-        task_title: task.title,
-        task_detail: task.detail,
-        task_image_url: task.image_url,
-        // Remove redundant fields if necessary
-      });
+      const result = await tasksCollection.insertOne(task);
 
       // Deduct coins
       await usersCollection.updateOne(
@@ -556,6 +552,48 @@ async function run() {
         res.send(result);
       }
     );
+
+    // --- Stripe Payment API ---
+
+    // Create Payment Intent
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100); // Convert to cents
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    // Save payment and update user coins
+    app.post("/payments", verifyToken, async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentsCollection.insertOne(payment);
+
+      // Increase user's coins
+      await usersCollection.updateOne(
+        { email: payment.email },
+        { $inc: { coins: payment.coins } }
+      );
+
+      res.send(paymentResult);
+    });
+
+    // Get payment history
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const result = await paymentsCollection
+        .find({ email: email })
+        .sort({ date: -1 })
+        .toArray();
+      res.send(result);
+    });
 
     // --- Notifications API ---
     app.get("/notifications/:email", verifyToken, async (req, res) => {
