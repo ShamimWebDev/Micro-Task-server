@@ -34,6 +34,7 @@ async function run() {
     const submissionsCollection = database.collection("submissions");
     const notificationsCollection = database.collection("notifications");
     const withdrawalsCollection = database.collection("withdrawals");
+    const paymentsCollection = database.collection("payments");
 
     // --- JWT & Auth Middlewares ---
 
@@ -94,7 +95,98 @@ async function run() {
       await notificationsCollection.insertOne(notification);
     };
 
+    // --- Stats API ---
+    app.get("/admin-stats", verifyToken, verifyAdmin, async (req, res) => {
+      const totalWorkers = await usersCollection.countDocuments({
+        role: "worker",
+      });
+      const totalBuyers = await usersCollection.countDocuments({
+        role: "buyer",
+      });
+      const users = await usersCollection.find().toArray();
+      const totalAvailableCoin = users.reduce(
+        (sum, user) => sum + (user.coins || 0),
+        0
+      );
+      const totalPayments = await withdrawalsCollection
+        .aggregate([
+          { $match: { status: "approved" } },
+          { $group: { _id: null, total: { $sum: "$withdrawal_amount" } } },
+        ])
+        .toArray();
+
+      res.send({
+        totalWorkers,
+        totalBuyers,
+        totalAvailableCoin,
+        totalPayments: totalPayments[0]?.total || 0,
+      });
+    });
+
+    app.get(
+      "/buyer-stats/:email",
+      verifyToken,
+      verifyBuyer,
+      async (req, res) => {
+        const email = req.params.email;
+        const totalTaskCount = await tasksCollection.countDocuments({
+          buyer_email: email,
+        });
+        const pendingTasks = await tasksCollection
+          .aggregate([
+            { $match: { buyer_email: email } },
+            { $group: { _id: null, total: { $sum: "$required_workers" } } },
+          ])
+          .toArray();
+        const totalPaymentPaid = await submissionsCollection
+          .aggregate([
+            { $match: { buyer_email: email, status: "approved" } },
+            { $group: { _id: null, total: { $sum: "$payable_amount" } } },
+          ])
+          .toArray();
+
+        res.send({
+          totalTaskCount,
+          pendingTaskCount: pendingTasks[0]?.total || 0,
+          totalPaymentPaid: totalPaymentPaid[0]?.total || 0,
+        });
+      }
+    );
+
+    app.get(
+      "/worker-stats/:email",
+      verifyToken,
+      verifyWorker,
+      async (req, res) => {
+        const email = req.params.email;
+        const totalSubmission = await submissionsCollection.countDocuments({
+          worker_email: email,
+        });
+        const pendingSubmission = await submissionsCollection.countDocuments({
+          worker_email: email,
+          status: "pending",
+        });
+        const totalEarning = await submissionsCollection
+          .aggregate([
+            { $match: { worker_email: email, status: "approved" } },
+            { $group: { _id: null, total: { $sum: "$payable_amount" } } },
+          ])
+          .toArray();
+
+        res.send({
+          totalSubmission,
+          pendingSubmission,
+          totalEarning: totalEarning[0]?.total || 0,
+        });
+      }
+    );
+
     // --- Users API ---
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
     app.post("/users", async (req, res) => {
       const user = req.body;
       const query = { email: user.email };
@@ -106,32 +198,87 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/users/role/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const { role } = req.body;
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { role: role } }
+      );
+      res.send(result);
+    });
+
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
     app.get("/users/role/:email", async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
-      res.send({ role: user?.role });
+      res.send({ role: user?.role, coins: user?.coins });
     });
 
     // --- Tasks API ---
+    app.get("/tasks", verifyToken, async (req, res) => {
+      const result = await tasksCollection
+        .find({ required_workers: { $gt: 0 } })
+        .toArray();
+      res.send(result);
+    });
+
+    app.get("/tasks/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const result = await tasksCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    app.get("/my-tasks/:email", verifyToken, verifyBuyer, async (req, res) => {
+      const email = req.params.email;
+      const result = await tasksCollection
+        .find({ buyer_email: email })
+        .sort({ completion_date: -1 })
+        .toArray();
+      res.send(result);
+    });
+
     app.post("/tasks", verifyToken, verifyBuyer, async (req, res) => {
       const task = req.body;
       const result = await tasksCollection.insertOne(task);
       res.send(result);
     });
 
+    app.delete("/tasks/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
     // --- Submissions API ---
+    app.get(
+      "/submissions/to-review/:email",
+      verifyToken,
+      verifyBuyer,
+      async (req, res) => {
+        const email = req.params.email;
+        const result = await submissionsCollection
+          .find({ buyer_email: email, status: "pending" })
+          .toArray();
+        res.send(result);
+      }
+    );
+
     app.post("/submissions", verifyToken, verifyWorker, async (req, res) => {
       const submission = req.body;
       const result = await submissionsCollection.insertOne(submission);
 
-      // Notify Buyer
       const message = `${submission.worker_name} has submitted work for ${submission.task_title}`;
       await createNotification(
         submission.buyer_email,
         message,
         "/dashboard/buyer-home"
       );
-
       res.send(result);
     });
 
@@ -139,7 +286,6 @@ async function run() {
       const email = req.query.email;
       const page = parseInt(req.query.page) || 1;
       const size = parseInt(req.query.size) || 10;
-
       const query = { worker_email: email };
       const total = await submissionsCollection.countDocuments(query);
       const result = await submissionsCollection
@@ -148,11 +294,9 @@ async function run() {
         .skip((page - 1) * size)
         .limit(size)
         .toArray();
-
       res.send({ total, result });
     });
 
-    // Approve/Reject Submission (Buyer)
     app.patch(
       "/submissions/:id",
       verifyToken,
@@ -161,19 +305,21 @@ async function run() {
         const id = req.params.id;
         const { status, payable_amount, workerEmail, buyerName, taskTitle } =
           req.body;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = { $set: { status: status } };
-
-        const result = await submissionsCollection.updateOne(filter, updateDoc);
+        const result = await submissionsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status } }
+        );
 
         if (status === "approved") {
           await usersCollection.updateOne(
             { email: workerEmail },
             { $inc: { coins: parseInt(payable_amount) } }
           );
+        } else {
+          // If rejected, maybe increase required workers back?
+          // Re-fetching task_id would be needed.
         }
 
-        // Add Notification
         const message =
           status === "approved"
             ? `You have earned 🪙 ${payable_amount} from ${buyerName} for completing ${taskTitle}`
@@ -188,7 +334,42 @@ async function run() {
       }
     );
 
+    // --- Payments API ---
+    app.post("/payments", verifyToken, verifyBuyer, async (req, res) => {
+      const payment = req.body;
+      const result = await paymentsCollection.insertOne(payment);
+
+      // Update user coins
+      await usersCollection.updateOne(
+        { email: payment.email },
+        { $inc: { coins: parseInt(payment.coins) } }
+      );
+
+      res.send(result);
+    });
+
+    app.get("/payments/:email", verifyToken, verifyBuyer, async (req, res) => {
+      const email = req.params.email;
+      const result = await paymentsCollection
+        .find({ email })
+        .sort({ date: -1 })
+        .toArray();
+      res.send(result);
+    });
+
     // --- Withdrawals API ---
+    app.get(
+      "/withdrawals/pending",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const result = await withdrawalsCollection
+          .find({ status: "pending" })
+          .toArray();
+        res.send(result);
+      }
+    );
+
     app.post("/withdrawals", verifyToken, verifyWorker, async (req, res) => {
       const withdrawal = req.body;
       const result = await withdrawalsCollection.insertOne(withdrawal);
@@ -202,19 +383,16 @@ async function run() {
       async (req, res) => {
         const id = req.params.id;
         const { status, workerEmail, withdrawal_coin } = req.body;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = { $set: { status: status } };
-
-        const result = await withdrawalsCollection.updateOne(filter, updateDoc);
+        const result = await withdrawalsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status } }
+        );
 
         if (status === "approved") {
-          // Decrease user coin
           await usersCollection.updateOne(
             { email: workerEmail },
             { $inc: { coins: -parseInt(withdrawal_coin) } }
           );
-
-          // Notify Worker
           const message = `Admin approved your withdrawal request of ${withdrawal_coin} coins`;
           await createNotification(
             workerEmail,
@@ -222,7 +400,6 @@ async function run() {
             "/dashboard/worker-home"
           );
         }
-
         res.send(result);
       }
     );
