@@ -47,6 +47,15 @@ const withdrawalSchema = Joi.object({
   status: Joi.string().valid("pending", "approved").default("pending"),
 });
 
+const userSchema = Joi.object({
+  name: Joi.string().required(),
+  email: Joi.string().email().required(),
+  photo: Joi.string().uri().required(),
+  role: Joi.string().valid("admin", "buyer", "worker").required(),
+  coins: Joi.number().required(),
+  uid: Joi.string().required(),
+});
+
 // Middleware
 app.use(
   cors({
@@ -243,11 +252,16 @@ async function run() {
     });
 
     app.post("/users", async (req, res) => {
-      const user = req.body;
+      const { error, value } = userSchema.validate(req.body);
+      if (error) {
+        return res.status(400).send({ message: error.details[0].message });
+      }
+
+      const user = value;
       const query = { email: user.email };
       const existingUser = await usersCollection.findOne(query);
       if (existingUser) {
-        return res.send({ message: "User already exists", insertedId: null });
+        return res.send({ message: "user already exists", insertedId: null });
       }
       const result = await usersCollection.insertOne(user);
       res.send(result);
