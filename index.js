@@ -1,11 +1,25 @@
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const Joi = require("joi");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Joi Schemas
+const taskSchema = Joi.object({
+  title: Joi.string().required(),
+  detail: Joi.string().required(),
+  required_workers: Joi.number().min(1).required(),
+  payable_amount: Joi.number().min(1).required(),
+  completion_date: Joi.string().required(),
+  submission_info: Joi.string().required(),
+  image_url: Joi.string().uri().required(),
+  buyer_email: Joi.string().email().required(),
+  status: Joi.string().valid("active", "pending").default("active"),
+});
 
 // Middleware
 app.use(
@@ -259,7 +273,12 @@ async function run() {
     });
 
     app.post("/tasks", verifyToken, verifyBuyer, async (req, res) => {
-      const task = req.body;
+      const { error, value } = taskSchema.validate(req.body);
+      if (error) {
+        return res.status(400).send({ message: error.details[0].message });
+      }
+
+      const task = value;
       const totalCost = task.required_workers * task.payable_amount;
 
       const user = await usersCollection.findOne({ email: task.buyer_email });
