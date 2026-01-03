@@ -556,8 +556,17 @@ app.get("/", (req, res) => {
   res.send("Micro Task Server is running");
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).send({ status: "UP", timestamp: new Date().toISOString() });
+});
+
 app.listen(port, () => {
   console.log(`Server is running on port: ${port}`);
+});
+
+// 404 Handler
+app.use((req, res, next) => {
+  res.status(404).send({ message: "Route not found" });
 });
 
 // Error handling middleware
