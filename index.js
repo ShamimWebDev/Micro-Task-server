@@ -5,6 +5,14 @@ const Joi = require("joi");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
+const requiredEnv = ["DB_USER", "DB_PASS", "ACCESS_TOKEN_SECRET"];
+requiredEnv.forEach((env) => {
+  if (!process.env[env]) {
+    console.error(`ERROR: Environment variable ${env} is missing!`);
+    process.exit(1);
+  }
+});
+
 const app = express();
 const port = process.env.PORT || 5000;
 
