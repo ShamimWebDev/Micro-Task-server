@@ -36,6 +36,17 @@ const submissionSchema = Joi.object({
     .default("pending"),
 });
 
+const withdrawalSchema = Joi.object({
+  worker_email: Joi.string().email().required(),
+  worker_name: Joi.string().required(),
+  withdrawal_coin: Joi.number().min(200).required(),
+  withdrawal_amount: Joi.number().required(),
+  payment_system: Joi.string().valid("bkash", "rocket", "nagad").required(),
+  account_number: Joi.string().required(),
+  withdraw_date: Joi.string().required(),
+  status: Joi.string().valid("pending", "approved").default("pending"),
+});
+
 // Middleware
 app.use(
   cors({
@@ -480,7 +491,19 @@ async function run() {
     );
 
     app.post("/withdrawals", verifyToken, verifyWorker, async (req, res) => {
-      const withdrawal = req.body;
+      const { error, value } = withdrawalSchema.validate(req.body);
+      if (error) {
+        return res.status(400).send({ message: error.details[0].message });
+      }
+
+      const withdrawal = value;
+      const user = await usersCollection.findOne({
+        email: withdrawal.worker_email,
+      });
+      if (user.coins < withdrawal.withdrawal_coin) {
+        return res.status(400).send({ message: "Insufficient coins" });
+      }
+
       const result = await withdrawalsCollection.insertOne(withdrawal);
       res.send(result);
     });
