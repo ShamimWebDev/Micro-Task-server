@@ -182,6 +182,15 @@ async function run() {
     );
 
     // --- Users API ---
+    app.get("/top-workers", async (req, res) => {
+      const result = await usersCollection
+        .find({ role: "worker" })
+        .sort({ coins: -1 })
+        .limit(6)
+        .toArray();
+      res.send(result);
+    });
+
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
@@ -245,13 +254,56 @@ async function run() {
 
     app.post("/tasks", verifyToken, verifyBuyer, async (req, res) => {
       const task = req.body;
-      const result = await tasksCollection.insertOne(task);
+      const totalCost = task.required_workers * task.payable_amount;
+
+      const user = await usersCollection.findOne({ email: task.buyer_email });
+      if (user.coins < totalCost) {
+        return res.status(400).send({ message: "Insufficient coins" });
+      }
+
+      const result = await tasksCollection.insertOne({
+        ...task,
+        task_title: task.title,
+        task_detail: task.detail,
+        task_image_url: task.image_url,
+        // Remove redundant fields if necessary
+      });
+
+      // Deduct coins
+      await usersCollection.updateOne(
+        { email: task.buyer_email },
+        { $inc: { coins: -totalCost } }
+      );
+
       res.send(result);
     });
 
     app.delete("/tasks/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
+      const task = await tasksCollection.findOne({ _id: new ObjectId(id) });
+
+      if (!task) return res.status(404).send({ message: "Task not found" });
+
+      // Calculate refill
+      // Note: We refill for remaining spots.
+      // If we want to be generous, we could also refill for pending submissions that will never be approved.
+      const pendingCount = await submissionsCollection.countDocuments({
+        task_id: id,
+        status: "pending",
+      });
+      const refillAmount =
+        (task.required_workers + pendingCount) * task.payable_amount;
+
+      // Refill coins to buyer
+      await usersCollection.updateOne(
+        { email: task.buyer_email },
+        { $inc: { coins: refillAmount } }
+      );
+
+      // Delete task and its submissions
       const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
+      await submissionsCollection.deleteMany({ task_id: id });
+
       res.send(result);
     });
 
@@ -272,6 +324,12 @@ async function run() {
     app.post("/submissions", verifyToken, verifyWorker, async (req, res) => {
       const submission = req.body;
       const result = await submissionsCollection.insertOne(submission);
+
+      // Decrease required_workers
+      await tasksCollection.updateOne(
+        { _id: new ObjectId(submission.task_id) },
+        { $inc: { required_workers: -1 } }
+      );
 
       const message = `${submission.worker_name} has submitted work for ${submission.task_title}`;
       await createNotification(
@@ -315,9 +373,15 @@ async function run() {
             { email: workerEmail },
             { $inc: { coins: parseInt(payable_amount) } }
           );
-        } else {
-          // If rejected, maybe increase required workers back?
-          // Re-fetching task_id would be needed.
+        } else if (status === "rejected") {
+          // We need task_id here. Let's assume it's passed or we fetch the submission.
+          const submission = await submissionsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          await tasksCollection.updateOne(
+            { _id: new ObjectId(submission.task_id) },
+            { $inc: { required_workers: 1 } }
+          );
         }
 
         const message =
