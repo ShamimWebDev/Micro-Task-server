@@ -16,6 +16,12 @@ app.use(
 );
 app.use(express.json());
 
+// Request logging (Simple)
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.lwmsv9d.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -490,4 +496,12 @@ app.get("/", (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server is running on port: ${port}`);
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res
+    .status(500)
+    .send({ message: "Something went wrong!", error: err.message });
 });
