@@ -21,6 +21,21 @@ const taskSchema = Joi.object({
   status: Joi.string().valid("active", "pending").default("active"),
 });
 
+const submissionSchema = Joi.object({
+  task_id: Joi.string().required(),
+  task_title: Joi.string().required(),
+  payable_amount: Joi.number().required(),
+  worker_email: Joi.string().email().required(),
+  worker_name: Joi.string().required(),
+  submission_details: Joi.string().required(),
+  buyer_name: Joi.string().required(),
+  buyer_email: Joi.string().email().required(),
+  current_date: Joi.string().required(),
+  status: Joi.string()
+    .valid("pending", "approved", "rejected")
+    .default("pending"),
+});
+
 // Middleware
 app.use(
   cors({
@@ -347,7 +362,12 @@ async function run() {
     );
 
     app.post("/submissions", verifyToken, verifyWorker, async (req, res) => {
-      const submission = req.body;
+      const { error, value } = submissionSchema.validate(req.body);
+      if (error) {
+        return res.status(400).send({ message: error.details[0].message });
+      }
+
+      const submission = value;
       const result = await submissionsCollection.insertOne(submission);
 
       // Decrease required_workers
