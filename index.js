@@ -69,7 +69,11 @@ const userSchema = Joi.object({
 // Middleware
 app.use(
   cors({
-    origin: ["https://micro-task-client.vercel.app"], // Update with production URL
+    origin: [
+      "https://micro-task-client.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:5174",
+    ],
     credentials: true,
   })
 );
