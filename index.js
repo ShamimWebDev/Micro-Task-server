@@ -295,7 +295,7 @@ async function run() {
     app.get("/users/role/:email", async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
-      res.send({ role: user?.role, coins: user?.coins });
+      res.send({ role: user?.role, coins: user?.coins, name: user?.name });
     });
 
     // --- Tasks API ---
@@ -372,6 +372,23 @@ async function run() {
       const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
       await submissionsCollection.deleteMany({ task_id: id });
 
+      res.send(result);
+    });
+
+    app.patch("/tasks/:id", verifyToken, verifyBuyer, async (req, res) => {
+      const id = req.params.id;
+      const { task_title, task_detail, submission_info } = req.body;
+
+      const filter = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          task_title,
+          task_detail,
+          submission_info,
+        },
+      };
+
+      const result = await tasksCollection.updateOne(filter, updatedDoc);
       res.send(result);
     });
 
