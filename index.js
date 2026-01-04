@@ -69,7 +69,7 @@ const userSchema = Joi.object({
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173"], // Update with production URL
+    origin: ["https://micro-task-client.vercel.app"], // Update with production URL
     credentials: true,
   })
 );
@@ -652,3 +652,5 @@ app.use((err, req, res, next) => {
     .status(500)
     .send({ message: "Something went wrong!", error: err.message });
 });
+
+module.exports = app;
